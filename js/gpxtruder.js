@@ -838,7 +838,28 @@ Basemap.prototype.ZoomLevel = function(ne, sw, mapDim) {
 		axis: latZoom < lngZoom ? "height" : "width"
 	};
 };
-
+Basemap.prototype.ZoomLevelMapBox = function(ne, sw, mapDim) {
+	// jacked from http://stackoverflow.com/a/13274361/339879
+	var WORLD_DIM = {height: 512, width: 512};
+	function latRad(lat) {
+		var sin = Math.sin(lat * Math.PI / 180);
+		var radX2 = Math.log((1 + sin) / (1 - sin)) / 2;
+		return Math.max(Math.min(radX2, Math.PI), -Math.PI) / 2;
+	}
+	function zoom(mapPx, worldPx, fraction) {
+		return (Math.log(mapPx / worldPx / fraction) / Math.LN2);
+	}
+	var latFraction = (latRad(ne[1]) - latRad(sw[1])) / Math.PI;
+	var lngDiff = ne[0] - sw[0];
+	var lngFraction = ((lngDiff < 0) ? (lngDiff + 360) : lngDiff) / 360;
+	var latZoom = zoom(mapDim.height, WORLD_DIM.height, latFraction);
+	var lngZoom = zoom(mapDim.width, WORLD_DIM.width, lngFraction);
+	return {
+		zoom: latZoom < lngZoom ? Math.floor(latZoom) : Math.floor(lngZoom),
+		span: latZoom < lngZoom ? latFraction : lngFraction,
+		axis: latZoom < lngZoom ? "height" : "width"
+	};
+};
 /*
  * Basemap.Update
  * Update basemap to fit specified region and bed dimensions.
@@ -860,26 +881,111 @@ Basemap.prototype.Update = function(bounds, bed) {
 	var sw = proj4("GOOGLE", "WGS84", [bounds.minx, bounds.miny]);
 	var ne = proj4("GOOGLE", "WGS84", [bounds.maxx, bounds.maxy]);
 	var zoominfo = this.ZoomLevel(ne, sw, mapsize);
-	
+	var zoominfoMapBox = this.ZoomLevelMapBox(ne, sw, mapsize);
+	// alert(zoominfo.zoom)
+	// alert(zoominfoMapBox.zoom)
 	// don't bother with base map if zoom level would be too high
 	if (zoominfo.zoom > 21) {
 		return false;
 	}
-	
+
+
 	var mapscale = mapsize[zoominfo.axis] / 256 / Math.exp(zoominfo.zoom * Math.LN2) / zoominfo.span;
+	var mapscaleMapBox = mapsize[zoominfo.axis] / 256 / Math.exp(zoominfo.zoom * Math.LN2) / zoominfo.span;
 	var center = proj4("GOOGLE", "WGS84", bounds.Center());
 	var mapurl = "https://maps.googleapis.com/maps/api/staticmap?center=" +
 			center[1].toFixed(6) + "," + center[0].toFixed(6) +
 			"&zoom=" + zoominfo.zoom + "&size=" + mapsize.width + "x" + mapsize.height +
 			"&maptype=hybrid&scale=2&format=jpg&key=AIzaSyBMTdBdNXMyAWYU8Sn4dt4WYtsf5lqvldA";
-	
+
+
+	var mapboxURL = "https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/" + center[0].toFixed(6) +
+	"," + center[1].toFixed(6) +
+	"," + zoominfo.zoom + ",0/" + (mapsize.width * 2) + "x" + (mapsize.height * 2) +
+	"@2x?access_token=pk.eyJ1IjoicmVuYXRvbmFzYyIsImEiOiJjbGh3ZDEwOG0wZnp0M2RvNHZrMzBkYWMyIn0.p8qRl3Hi20j7cF1sD9QcaA"
+	//alert(mapurl)
+	//alert(mapboxURL)
+
+	var urls = "img centro -> " + mapboxURL + " - \n"
+	+ "img centro -> Googl -> " + mapurl + " - \n"
+	+ "img cima -> " + urlFromBound(imgUp(bounds), zoominfo, mapsize) + " - \n"
+	+ "img baixo -> " + urlFromBound(imgDown(bounds), zoominfo, mapsize) + " - \n" 
+	+ "img dir -> " + urlFromBound(imgRigth(bounds), zoominfo, mapsize) + " - \n"
+	+ "img dir CIMA -> " + urlFromBound(imgUp(imgRigth(bounds)), zoominfo, mapsize) + " - \n"
+	+ "img dir BAIXO -> " + urlFromBound(imgDown(imgRigth(bounds)), zoominfo, mapsize) + " - \n"
+	+ "img esq -> " + urlFromBound(imgLeft(bounds), zoominfo, mapsize) + " - \n"
+	+ "img esq CIMA -> " + urlFromBound(imgUp(imgLeft(bounds)), zoominfo, mapsize) + " - \n"
+	+ "img esq BAIXO -> " + urlFromBound(imgDown(imgLeft(bounds)), zoominfo, mapsize) + " - \n"
+
+	alert(urls)
+
 	if (this.view !== null) {
-		this.view.setBaseMap(mapurl, mapscale, bed.x, bed.y, this.Download);
+		this.view.setBaseMap(mapboxURL, mapscaleMapBox, bed.x, bed.y, this.Download);
 	}
 	
 	return true;
 };
 
+ var urlFromBound = function(bounds, zoominfo, mapsize) {
+	var imgCompCenter = proj4("GOOGLE", "WGS84", bounds.Center());
+	var mapboxURL = "https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/" + imgCompCenter[0].toFixed(6) +
+	"," + imgCompCenter[1].toFixed(6) +
+	"," + zoominfo.zoom + ",0/" + (mapsize.width * 2) + "x" + (mapsize.height * 2) +
+	"@2x?access_token=pk.eyJ1IjoicmVuYXRvbmFzYyIsImEiOiJjbGh3ZDEwOG0wZnp0M2RvNHZrMzBkYWMyIn0.p8qRl3Hi20j7cF1sD9QcaA"
+	return mapboxURL
+ }
+
+ var imgDown = function(bounds) {
+	var width = bounds.maxx - bounds.minx
+	var height = bounds.maxy - bounds.miny
+	var boundsB = new Bounds()
+	
+	boundsB.minx = bounds.minx
+	boundsB.miny = bounds.miny - height
+	boundsB.maxx = bounds.maxx
+	boundsB.maxy = bounds.miny 
+	
+	return boundsB
+}
+
+var imgUp = function(bounds) {
+	var width = bounds.maxx - bounds.minx
+	var height = bounds.maxy - bounds.miny
+	var boundsB = new Bounds()
+	
+	boundsB.minx = bounds.minx
+	boundsB.miny = bounds.maxy 
+	boundsB.maxx = bounds.maxx
+	boundsB.maxy = bounds.maxy + height 
+	
+	return boundsB
+}
+
+var imgRigth = function(bounds) {
+	var width = bounds.maxx - bounds.minx
+	var height = bounds.maxy - bounds.miny
+	var boundsB = new Bounds()
+	
+	boundsB.minx = bounds.maxx
+	boundsB.miny = bounds.miny
+	boundsB.maxx = bounds.maxx + (width * 2)
+	boundsB.maxy = bounds.maxy 
+	
+	return boundsB
+}
+
+var imgLeft = function(bounds) {
+	var width = bounds.maxx - bounds.minx
+	var height = bounds.maxy - bounds.miny
+	var boundsB = new Bounds()
+	
+	boundsB.minx = bounds.minx - width 
+	boundsB.miny = bounds.miny
+	boundsB.maxx = bounds.minx
+	boundsB.maxy = bounds.maxy 
+	
+	return boundsB
+}
 /*
  * Basemap.Clear
  * Resets basemap texture. 
